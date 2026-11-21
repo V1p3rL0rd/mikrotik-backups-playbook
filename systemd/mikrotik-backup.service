@@ -1,0 +1,16 @@
+[Unit]
+Description=MikroTik configuration backup (Ansible)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ansible
+WorkingDirectory=/opt/mikrotik-backup
+ExecStart=/usr/bin/ansible-playbook mt-backup.yml --vault-password-file /etc/mikrotik-backup/vault_pass
+TimeoutStartSec=15min
+NoNewPrivileges=yes
+ProtectSystem=strict
+# "-" prefix: skip the path if it does not exist (textfile collector is optional)
+ReadWritePaths=/opt/mikrotik-backup/backups -/var/lib/node_exporter/textfile_collector
+PrivateTmp=yes

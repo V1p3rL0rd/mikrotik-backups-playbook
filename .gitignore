@@ -1,0 +1,5 @@
+backups/
+*.retry
+.vault_pass*
+group_vars/*/vault.yml.dec
+.ansible/

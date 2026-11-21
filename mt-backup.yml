@@ -1,0 +1,91 @@
+---
+- name: Backup MikroTik RouterOS configuration
+  hosts: mikrotik
+  gather_facts: false
+
+  tasks:
+    - name: Fix run timestamp (one value for all hosts)
+      ansible.builtin.set_fact:
+        backup_ts: "{{ now(utc=true, fmt='%Y-%m-%dT%H-%M-%SZ') }}"
+      run_once: true  # noqa: run-once[task]
+
+    - name: Collect identity and configuration export
+      community.routeros.command:
+        commands:
+          - ":put [/system identity get name]"
+          - "/export terse{{ ' show-sensitive' if backup_show_sensitive | bool else '' }}"
+      register: ros
+
+    - name: Prepare backup data
+      ansible.builtin.set_fact:
+        router_name: >-
+          {{ (ros.stdout[0] | trim | regex_replace('[^A-Za-z0-9._-]', '_'))
+             or (inventory_hostname | regex_replace('[^A-Za-z0-9._-]', '_')) }}
+        # Strip timestamp from "# 2026-11-21 12:00:00 by RouterOS 7.16" header so the file changes only on real config diff
+        ros_export: >-
+          {{ ros.stdout[1] | replace('\r', '')
+             | regex_replace('(?m)^#.*? by RouterOS', '# by RouterOS') }}
+
+    - name: Validate export is complete
+      ansible.builtin.assert:
+        that:
+          - ros_export is search('by RouterOS')
+          - ros_export | length > 200
+        fail_msg: "Export from {{ inventory_hostname }} looks truncated or invalid ({{ ros_export | length }} chars)"
+        quiet: true
+
+    - name: Ensure per-router backup directory exists
+      ansible.builtin.file:
+        path: "{{ backup_root }}/{{ router_name }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+
+    - name: Save current configuration (idempotent)
+      ansible.builtin.copy:
+        content: "{{ ros_export }}\n"
+        dest: "{{ backup_root }}/{{ router_name }}/current.rsc"
+        mode: "0600"
+      delegate_to: localhost
+      notify: Archive timestamped copy
+
+    - name: Find archives older than retention period
+      ansible.builtin.find:
+        paths: "{{ backup_root }}/{{ router_name }}"
+        patterns: "{{ router_name }}_*.rsc"
+        age: "{{ backup_retention_days }}d"
+      delegate_to: localhost
+      register: old_archives
+
+    - name: Remove expired archives (current.rsc is always kept)
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_archives.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      delegate_to: localhost
+
+    - name: Export success metric for node_exporter textfile collector
+      ansible.builtin.copy:
+        content: |
+          # HELP mikrotik_backup_last_success_timestamp_seconds Unix time of last successful backup.
+          # TYPE mikrotik_backup_last_success_timestamp_seconds gauge
+          mikrotik_backup_last_success_timestamp_seconds{router="{{ router_name }}",host="{{ inventory_hostname }}"} {{ now(utc=true).timestamp() | int }}
+          # HELP mikrotik_backup_size_bytes Size of last export.
+          # TYPE mikrotik_backup_size_bytes gauge
+          mikrotik_backup_size_bytes{router="{{ router_name }}",host="{{ inventory_hostname }}"} {{ ros_export | length }}
+        dest: "{{ backup_textfile_dir }}/mikrotik_backup_{{ inventory_hostname }}.prom"
+        mode: "0644"
+      delegate_to: localhost
+      changed_when: false
+      when: backup_textfile_dir | length > 0
+
+  handlers:
+    - name: Archive timestamped copy
+      ansible.builtin.copy:
+        src: "{{ backup_root }}/{{ router_name }}/current.rsc"
+        dest: "{{ backup_root }}/{{ router_name }}/{{ router_name }}_{{ backup_ts }}.rsc"
+        remote_src: true
+        mode: "0600"
+      delegate_to: localhost

@@ -1,0 +1,13 @@
+---
+ansible_connection: ansible.netcommon.network_cli
+ansible_network_os: community.routeros.routeros
+# "+cet1024w": no colors (c), no terminal autodetect (t), width 1024 (w) — avoids ANSI codes and wrapped lines
+ansible_user: "{{ vault_mikrotik_backup_user }}+cet1024w"
+ansible_password: "{{ vault_mikrotik_backup_password }}"
+# Key-based auth instead of password (recommended):
+# ansible_ssh_private_key_file: ~/.ssh/mikrotik_backup
+
+backup_root: "{{ playbook_dir }}/backups"
+backup_retention_days: 90
+backup_show_sensitive: false        # true -> export includes private keys/PSKs (RouterOS 7 only, needs "sensitive" policy)
+backup_textfile_dir: ""             # e.g. /var/lib/node_exporter/textfile_collector

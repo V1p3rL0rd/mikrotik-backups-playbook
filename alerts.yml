@@ -1,0 +1,15 @@
+groups:
+  - name: mikrotik-backup
+    rules:
+      - alert: MikrotikBackupStale
+        expr: time() - mikrotik_backup_last_success_timestamp_seconds > 26 * 3600
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "No successful MikroTik backup for {{ $labels.router }} in >26h"
+      - alert: MikrotikBackupSizeDrop
+        expr: mikrotik_backup_size_bytes < 0.5 * max_over_time(mikrotik_backup_size_bytes[7d])
+        for: 0m
+        labels: { severity: warning }
+        annotations:
+          summary: "Export size of {{ $labels.router }} dropped >50% vs 7d max"
